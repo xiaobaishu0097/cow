@@ -126,3 +126,5 @@ v0.2.1.tar.gz
 v1/
 results*/
 localization_datasets/
+
+.vscode

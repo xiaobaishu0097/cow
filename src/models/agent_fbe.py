@@ -5,9 +5,13 @@ from abc import ABC, abstractmethod
 # from skimage import filters
 from src.models.agent import Agent
 from src.models.exploration.frontier_based_exploration import FrontierBasedExploration
-from src.simulation.constants import (FORWARD_M,
-                                      MAX_CEILING_HEIGHT_M,
-                                      ROTATION_DEG, VOXEL_SIZE_M, IN_CSPACE)
+from src.simulation.constants import (
+    FORWARD_M,
+    MAX_CEILING_HEIGHT_M,
+    ROTATION_DEG,
+    VOXEL_SIZE_M,
+    IN_CSPACE,
+)
 from torch import device, is_tensor
 from src.models.agent_mode import AgentMode
 from threadpoolctl import threadpool_limits
@@ -15,33 +19,44 @@ import numpy as np
 
 
 class AgentFbe(Agent, ABC):
-    '''
+    """
     NOTE: this class is kinda just meant for inference
-    '''
+    """
 
     def __init__(
-            self,
-            fov: float,
-            device: device,
-            agent_height: float,
-            floor_tolerance: float,
-            max_ceiling_height: float = MAX_CEILING_HEIGHT_M,
-            rotation_degrees: int = ROTATION_DEG,
-            forward_distance: float = FORWARD_M,
-            voxel_size_m: float = VOXEL_SIZE_M,
-            in_cspace: bool = IN_CSPACE,
-            debug_dir: str = None,
-            wandb_log: bool = False,
-            negate_action: bool = False,
-            fail_stop: bool = True,
-            open_clip_checkpoint: str = '',
-            alpha: float = 0.):
-
+        self,
+        fov: float,
+        device: device,
+        agent_height: float,
+        floor_tolerance: float,
+        max_ceiling_height: float = MAX_CEILING_HEIGHT_M,
+        rotation_degrees: int = ROTATION_DEG,
+        forward_distance: float = FORWARD_M,
+        voxel_size_m: float = VOXEL_SIZE_M,
+        in_cspace: bool = IN_CSPACE,
+        debug_dir: str = None,
+        wandb_log: bool = False,
+        negate_action: bool = False,
+        fail_stop: bool = True,
+        open_clip_checkpoint: str = "",
+        alpha: float = 0.0,
+    ):
         super(AgentFbe, self).__init__()
 
-        self.fbe = FrontierBasedExploration(fov, device, max_ceiling_height, agent_height,
-                                            floor_tolerance, rotation_degrees, forward_distance,
-                                            voxel_size_m, in_cspace, wandb_log, negate_action, fail_stop)
+        self.fbe = FrontierBasedExploration(
+            fov,
+            device,
+            max_ceiling_height,
+            agent_height,
+            floor_tolerance,
+            rotation_degrees,
+            forward_distance,
+            voxel_size_m,
+            in_cspace,
+            wandb_log,
+            negate_action,
+            fail_stop,
+        )
         self.timesteps = 0
         self.debug_dir = debug_dir
         self.debug_data = []
@@ -55,9 +70,9 @@ class AgentFbe(Agent, ABC):
 
         self.rotation_degrees = rotation_degrees
         self.forward_distance = forward_distance
-        assert (360-int(fov)) % self.rotation_degrees == 0
+        assert (360 - int(fov)) % self.rotation_degrees == 0
         self.rotation_counter = 0
-        self.max_rotation_count = (360-int(fov))/self.rotation_degrees
+        self.max_rotation_count = (360 - int(fov)) / self.rotation_degrees
         self.last_action = None
         self.open_clip_checkpoint = open_clip_checkpoint
         self.alpha = alpha
@@ -77,10 +92,7 @@ class AgentFbe(Agent, ABC):
 
             # with threadpool_limits(limits=1):
             # update map
-            self.fbe.update_map(
-                observations,
-                attention,
-                self.last_action)
+            self.fbe.update_map(observations, attention, self.last_action)
 
             if self.fbe.poll_roi_exists() and self.agent_mode != AgentMode.EXPLOIT:
                 self.rotation_counter = 0
@@ -89,7 +101,10 @@ class AgentFbe(Agent, ABC):
                 # NOTE: uncomment for fig
                 self.agent_mode = AgentMode.EXPLOIT
 
-            elif self.agent_mode == AgentMode.SPIN and self.rotation_counter == self.max_rotation_count:
+            elif (
+                self.agent_mode == AgentMode.SPIN
+                and self.rotation_counter == self.max_rotation_count
+            ):
                 self.rotation_counter = 0
                 self.action_queue = []
                 self.agent_mode = AgentMode.EXPLORE
@@ -136,17 +151,13 @@ class AgentFbe(Agent, ABC):
             # Agent confused, move to spin mode
             self.fbe.reset()
             self.agent_mode = AgentMode.SPIN
-            self.fbe.update_map(
-                observations,
-                attention,
-                self.last_action)
+            self.fbe.update_map(observations, attention, self.last_action)
 
             return self.rotate()
 
         return self.action_queue.pop(0)
 
     def exploit(self, observations, attention) -> str:
-
         if not len(self.action_queue):
             self.action_queue = self.fbe.action_towards_next_roi()
 
@@ -154,10 +165,7 @@ class AgentFbe(Agent, ABC):
             # Agent confused, move to spin mode
             self.fbe.reset()
             self.agent_mode = AgentMode.SPIN
-            self.fbe.update_map(
-                observations,
-                attention,
-                self.last_action)
+            self.fbe.update_map(observations, attention, self.last_action)
 
             return self.rotate()
 

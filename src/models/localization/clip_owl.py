@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 from torch import device
 from transformers import OwlViTForObjectDetection, OwlViTProcessor, OwlViTConfig
-from transformers.models.owlvit.feature_extraction_owlvit import center_to_corners_format
+from transformers.image_transforms import center_to_corners_format
+
 
 def post_process(outputs, target_sizes):
     # NOTE: transformers/models/owlvit/feature_extraction_owlvit.py to put scale_fct on the correct device
@@ -26,9 +27,13 @@ def post_process(outputs, target_sizes):
     logits, boxes = outputs.logits, outputs.pred_boxes
 
     if len(logits) != len(target_sizes):
-        raise ValueError("Make sure that you pass in as many target sizes as the batch dimension of the logits")
+        raise ValueError(
+            "Make sure that you pass in as many target sizes as the batch dimension of the logits"
+        )
     if target_sizes.shape[1] != 2:
-        raise ValueError("Each element of target_sizes must contain the size (h, w) of each image of the batch")
+        raise ValueError(
+            "Each element of target_sizes must contain the size (h, w) of each image of the batch"
+        )
 
     probs = torch.max(logits, dim=-1)
     scores = torch.sigmoid(probs.values)
@@ -46,6 +51,7 @@ def post_process(outputs, target_sizes):
 
     return results
 
+
 class MyOwlViTForObjectDetection(OwlViTForObjectDetection):
     def __init__(self, config: OwlViTConfig):
         super().__init__(config)
@@ -58,9 +64,9 @@ class MyOwlViTForObjectDetection(OwlViTForObjectDetection):
 
         height, width = feature_map.shape[1:3]
 
-        box_coordinates = np.stack(np.meshgrid(np.arange(1, width + 1), np.arange(1, height + 1)), axis=-1).astype(
-            np.float32
-        )
+        box_coordinates = np.stack(
+            np.meshgrid(np.arange(1, width + 1), np.arange(1, height + 1)), axis=-1
+        ).astype(np.float32)
         box_coordinates /= np.array([width, height], np.float32)
 
         # Flatten (h, w, 2) -> (h*w, 2)
@@ -71,37 +77,40 @@ class MyOwlViTForObjectDetection(OwlViTForObjectDetection):
 
         return box_coordinates.to(feature_map.device)
 
+
 class ClipOwl(nn.Module):
-    '''
+    """
     NOTE: this class is kinda just meant for inference
-    '''
+    """
 
     def __init__(
-            self,
-            clip_model_name: str,
-            classes: List[str],
-            classes_clip: List[str],
-            templates: List[str],
-            threshold: float,
-            device: device,
-            center_only: bool = False):
-
+        self,
+        clip_model_name: str,
+        classes: List[str],
+        classes_clip: List[str],
+        templates: List[str],
+        threshold: float,
+        device: device,
+        center_only: bool = False,
+    ):
         super(ClipOwl, self).__init__()
 
         self.clip_model_name = clip_model_name
 
-        assert 'ViT' in clip_model_name
+        assert "ViT" in clip_model_name
         owl_from_pretrained = None
-        if clip_model_name == 'ViT-B/32':
-            owl_from_pretrained = 'google/owlvit-base-patch32'
-        elif clip_model_name == 'ViT-B/16':
-            owl_from_pretrained = 'google/owlvit-base-patch16'
-        elif clip_model_name == 'ViT-L/14':
-            owl_from_pretrained = 'google/owlvit-large-patch14'
+        if clip_model_name == "ViT-B/32":
+            owl_from_pretrained = "google/owlvit-base-patch32"
+        elif clip_model_name == "ViT-B/16":
+            owl_from_pretrained = "google/owlvit-base-patch16"
+        elif clip_model_name == "ViT-L/14":
+            owl_from_pretrained = "google/owlvit-large-patch14"
         else:
-            raise ValueError('gotta be a clip vit')
+            raise ValueError("gotta be a clip vit")
 
-        self.model = MyOwlViTForObjectDetection.from_pretrained(owl_from_pretrained).eval().to(device)
+        self.model = (
+            MyOwlViTForObjectDetection.from_pretrained(owl_from_pretrained).eval().to(device)
+        )
         self.model.owlvit = self.model.owlvit.eval().to(device)
         self.model.class_head = self.model.class_head.eval().to(device)
         self.model.box_head = self.model.box_head.eval().to(device)
@@ -116,23 +125,36 @@ class ClipOwl(nn.Module):
 
         self.sentence_lookup = {}
         for i, c in enumerate(self.target_classes):
-            self.sentence_lookup[c] = f'a photo of a {self.target_classes_clip[i]}.'
+            self.sentence_lookup[c] = f"a photo of a {self.target_classes_clip[i]}."
         self.count = 0
         self.threshold = threshold
 
         self.center_only = center_only
 
     def forward(self, x, o):
-        texts = [[self.sentence_lookup[o],],]
-        inputs = self.processor(text=texts, images=x, return_tensors="pt", truncation=True)
-        for k in inputs:
-            inputs[k] = inputs[k].to(self.device)
+        texts = [
+            [
+                self.sentence_lookup[o],
+            ],
+        ]
+        inputs = self.processor(text=texts, images=x, return_tensors="pt", truncation=True).to(
+            device=self.device
+        )
+        # for k in inputs:
+        #     inputs[k] = inputs[k].to(self.device)
 
         outputs = self.model(**inputs)
 
         # Convert outputs (bounding boxes and class logits) to COCO API
         # target_sizes = torch.Tensor([x.size[::-1]])
-        results = post_process(outputs=outputs, target_sizes=torch.tensor([[224., 224.],]))
+        results = post_process(
+            outputs=outputs,
+            target_sizes=torch.tensor(
+                [
+                    [224.0, 224.0],
+                ]
+            ),
+        )
 
         # Retrieve predictions for the first image for the corresponding text queries
         boxes, scores = results[0]["boxes"], results[0]["scores"]
@@ -144,13 +166,13 @@ class ClipOwl(nn.Module):
                 box = [int(round(i, 2)) for i in box.tolist()]
 
                 if self.center_only:
-                    u = int(round((box[1]+box[3]) / 2, 2))
-                    v = int(round((box[0]+box[2]) / 2, 2))
+                    u = int(round((box[1] + box[3]) / 2, 2))
+                    v = int(round((box[0] + box[2]) / 2, 2))
 
-                    image_relevance[u, v] = 1.
+                    image_relevance[u, v] = 1.0
 
                 else:
-                    image_relevance[box[1]:box[3], box[0]:box[2]] = 1.
+                    image_relevance[box[1] : box[3], box[0] : box[2]] = 1.0
 
         return image_relevance
 
@@ -162,4 +184,4 @@ class ClipOwl(nn.Module):
 
         self.sentence_lookup = {}
         for i, c in enumerate(self.target_classes):
-            self.sentence_lookup[c] = f'a photo of a {self.target_classes_clip[i]}.'
+            self.sentence_lookup[c] = f"a photo of a {self.target_classes_clip[i]}."
